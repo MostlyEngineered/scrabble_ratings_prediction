@@ -1,15 +1,20 @@
 import numpy as np
 import pandas as pd
+
 pd.set_option('display.max_columns', None)
 SEED = 100
 np.random.seed(SEED)
 
 import pandas as pd
 import os
-import sklearn
+# import sklearn
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from enum import Enum
+
+
+from datetime import datetime
+
 
 # class Bots(enum.Enum):
 
@@ -20,21 +25,21 @@ BOTS = Enum("BOTS", bots)
 data_folder = "data"
 
 train_data_file = os.path.join(data_folder, "train.csv")
-test_data_file = os.path.join(data_folder, "test.csv")
+submission_data_file = os.path.join(data_folder, "test.csv")
 turns_data_file = os.path.join(data_folder, "turns.csv")
 games_data_file = os.path.join(data_folder, "games.csv")
 
 train_data = pd.read_csv(train_data_file)
-test_data = pd.read_csv(test_data_file)
+submission_data = pd.read_csv(submission_data_file)
 turns_data = pd.read_csv(turns_data_file)
 games_data = pd.read_csv(games_data_file)
 
-test_players = test_data["nickname"].unique()
+submission_players = submission_data["nickname"].unique()
 train_players = train_data["nickname"].unique()
 
 total_players = list(set(train_players + train_players))
 print(
-    f"Number of test players, {len(test_players)}\nNumber of train players, {len(train_players)}\nNumber of total players, {len(total_players)}"
+    f"Number of submission players, {len(submission_players)}\nNumber of train players, {len(train_players)}\nNumber of total players, {len(total_players)}"
 )
 
 games_by_nickname = train_data[["nickname", "score"]].groupby("nickname").count().sort_values("score", ascending=False)
@@ -51,8 +56,10 @@ def is_bot(nickname):
 def bot_nickname_to_enum(nickname):
     return BOTS[nickname].value
 
+
 def string_col_to_enum(nickname):
     return BOTS[nickname].value
+
 
 def make_xy_data(base_data):
     base_data = add_game_metadata(base_data, games_data)
@@ -86,7 +93,6 @@ def make_xy_data(base_data):
 
     x_columns = [
         "score",
-        "rating",
         "winner",
         "initial_time_seconds",
         "increment_seconds",
@@ -98,16 +104,30 @@ def make_xy_data(base_data):
 
     X = player_data[x_columns]
     y = player_data["rating"]
+    game_ids = player_data['game_id']
 
-    return X, y
+    return X, y, game_ids
 
+def generate_submission_data(output_csv):
+    submission = pd.DataFrame([])
+    submit_x, submit_y, game_ids = make_xy_data(submission_data)
+    submit_y = rf_model.predict(submit_x)
+    submission['game_id'] = game_ids
+    submission['rating'] = submit_y
+    submission.to_csv(output_csv)
 
 if __name__ == "__main__":
+    data_x, data_y, _ = make_xy_data(train_data)
 
-    data_x, data_y = make_xy_data(train_data)
+    x_train, x_test, y_train, y_test = train_test_split(data_x, data_y, train_size=0.85, random_state=SEED)
 
-    x_train, x_test, y_train, y_test = train_test_split(data_x, data_y, train_size=0.7, random_state=SEED)
-
-
-    rf_model = RandomForestRegressor(max_depth=2, random_state=0)
+    rf_model = RandomForestRegressor(random_state=0)
     rf_model.fit(x_train, y_train)
+    print(f"Random Forest Model accuracy: {rf_model.score(x_test, y_test)}")
+
+    now = datetime.now()  # current date and time
+
+    date_time = now.strftime("%m-%d-%Y_%H-%M-%S")
+
+    generate_submission_data(f"submission_rf_{date_time}.csv")
+
