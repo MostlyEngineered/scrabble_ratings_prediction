@@ -24,6 +24,8 @@ BOTS = Enum("BOTS", bots)
 
 data_folder = "data"
 
+enums = []
+
 train_data_file = os.path.join(data_folder, "train.csv")
 submission_data_file = os.path.join(data_folder, "test.csv")
 turns_data_file = os.path.join(data_folder, "turns.csv")
@@ -62,6 +64,8 @@ def string_col_to_enum(nickname):
 
 
 def make_xy_data(base_data):
+    global enums
+
     base_data = add_game_metadata(base_data, games_data)
 
     is_bot_data = base_data["nickname"].apply(is_bot)
@@ -77,7 +81,6 @@ def make_xy_data(base_data):
 
     x_columns = [
         "score",
-        "rating",
         "time_control_name",
         "game_end_reason",
         "winner",
@@ -103,12 +106,19 @@ def make_xy_data(base_data):
     # ]
 
     X = player_data[x_columns]
+    string_data = X.select_dtypes(exclude=[np.number, int, float])
 
-    for col in X.columns:
-        if isinstance(X[col].dtype, object):
-            vals = X[col].unique()
-            ENUM_VALS = Enum("BOTS", vals)
+    enum_data = pd.DataFrame([])
+    for col in string_data.columns:
+        if isinstance(string_data[col].dtype, object):
+            vals = string_data[col].unique()
+            enum_col = col + "_enum"
+            ENUM_VALS = Enum(enum_col, vals.tolist())
+            enums = enums + [ENUM_VALS]
+            enum_data[enum_col] = string_data[col].apply(lambda x: (ENUM_VALS[x].value))
 
+    X = X.drop(columns=string_data.columns.to_list())
+    X = pd.concat([X, enum_data], ignore_index=True, axis=1)
 
     y = player_data["rating"]
     game_ids = player_data['game_id']
