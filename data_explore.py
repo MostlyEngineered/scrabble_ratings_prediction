@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+import sklearn.metrics
+import matplotlib.pyplot as plt
 
 pd.set_option('display.max_columns', None)
 SEED = 100
@@ -130,27 +132,38 @@ class StatModel:
         self.model = model
         self.x_train, self.x_test, self.y_train, self.y_test = train_test_data
         self.model.fit(self.x_train, self.y_train)
-        self.score = self.model.score(self.x_test, self.y_test)
+        self.test_predictions = self.model.predict(self.x_test)
+        self.score = sklearn.metrics.mean_squared_error(self.y_test, self.test_predictions, squared=False)
 
         print(f"For {self.model}, score is: {self.score}")
+        self.submit_y = None
+        self.submission = pd.DataFrame([])
 
     def __lt__(self, other):
         return self.score < other.score
 
     def generate_submission_data(self, output_csv):
-        submission = pd.DataFrame([])
         submit_x, submit_y, game_ids = make_xy_data(submission_data)
-        submit_y = self.model.predict(submit_x)
-        submission['game_id'] = game_ids
-        submission['rating'] = submit_y
-        submission.to_csv(output_csv, index=False)
+        self.submit_y = self.model.predict(submit_x)
+        self.submission['game_id'] = game_ids
+        self.submission['rating'] = self.submit_y
+        self.submission.to_csv(output_csv, index=False)
+
+    def plot_error(self, n_bins=20):
+        self.errors = np.subtract(self.test_predictions, self.y_test)
+
+        # Generate two normal distributions
+        fig, ax = plt.subplots(tight_layout=True)
+
+        # We can set the number of bins with the *bins* keyword argument.
+        hist = ax.hist(self.errors, bins=n_bins)
 
 
 if __name__ == "__main__":
     data_x, data_y, _ = make_xy_data(train_data)
 
     # x_train, x_test, y_train, y_test = train_test_split(data_x, data_y, train_size=0.85, random_state=SEED)
-    train_test_data = train_test_split(data_x, data_y, train_size=0.85, random_state=SEED)
+    train_test_data = train_test_split(data_x, data_y, train_size=0.7, random_state=SEED)
 
     models = [
         RandomForestRegressor(random_state=0),
@@ -166,4 +179,4 @@ if __name__ == "__main__":
     submission_file = f"submission_{best_model.__class__.__name__}_{date_time}.csv"
 
     best_model.generate_submission_data(os.path.join(submission_directory, submission_file))
-
+    best_model.plot_error()
