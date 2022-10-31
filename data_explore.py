@@ -2,8 +2,7 @@ import numpy as np
 import pandas as pd
 
 
-
-pd.set_option('display.max_columns', None)
+pd.set_option("display.max_columns", None)
 SEED = 100
 np.random.seed(SEED)
 
@@ -20,6 +19,7 @@ import xgboost as xgb
 
 from datetime import datetime
 import matplotlib.pyplot as plt
+
 # class Bots(enum.Enum):
 
 bots = ["STEEBot", "BetterBot", "HastyBot"]
@@ -69,7 +69,18 @@ def string_col_to_enum(nickname):
     return BOTS[nickname].value
 
 
-def make_xy_data(base_data, remove_overrepresented=True):
+def improve_normalization(player_data):
+    # Remove overrepresented data
+    counts, bins = np.histogram(player_data["rating"], bins=histogram_bins)
+    max_bin = np.argmax(counts)
+    bounds = (bins[max_bin], bins[max_bin + 1])
+    player_data = player_data.loc[
+        (player_data["rating"] <= bins[max_bin]) | (player_data["rating"] >= bins[max_bin + 1])
+    ]
+    return player_data
+
+
+def make_xy_data(base_data, improve_normalization_flag=True):
     global enums
 
     base_data = add_game_metadata(base_data, games_data)
@@ -85,14 +96,8 @@ def make_xy_data(base_data, remove_overrepresented=True):
     player_data["bot_number_played"] = player_data["bot_played"].apply(bot_nickname_to_enum)
     player_data["game_margin"] = player_data["score"] - player_data["bot_score"]
 
-
-    if remove_overrepresented:
-        # Remove overrepresented data
-        counts, bins = np.histogram(player_data['rating'], bins=histogram_bins)
-        max_bin = np.argmax(counts)
-        bounds = (bins[max_bin], bins[max_bin+1])
-        player_data = player_data.loc[(player_data['rating'] <= bins[max_bin]) | (player_data['rating'] >= bins[max_bin+1])]
-
+    if improve_normalization_flag:
+        player_data = improve_normalization(player_data)
 
     x_columns = [
         "score",
@@ -106,7 +111,7 @@ def make_xy_data(base_data, remove_overrepresented=True):
         "max_overtime_minutes",
         "game_duration_seconds",
         "game_margin",
-        "bot_number_played"
+        "bot_number_played",
     ]
 
     # x_columns = [
@@ -138,9 +143,10 @@ def make_xy_data(base_data, remove_overrepresented=True):
     X.columns = X_initial_columns.to_list() + enum_data.columns.to_list()
 
     y = player_data["rating"]
-    game_ids = player_data['game_id']
+    game_ids = player_data["game_id"]
 
     return X, y, game_ids
+
 
 class StatModel:
     def __init__(self, model, train_test_data):
@@ -158,10 +164,10 @@ class StatModel:
         return self.score < other.score
 
     def generate_submission_data(self, output_csv):
-        submit_x, submit_y, game_ids = make_xy_data(submission_data)
+        submit_x, submit_y, game_ids = make_xy_data(submission_data, improve_normalization_flag=False)
         self.submit_y = self.model.predict(submit_x)
-        self.submission['game_id'] = game_ids
-        self.submission['rating'] = self.submit_y
+        self.submission["game_id"] = game_ids
+        self.submission["rating"] = self.submit_y
         self.submission.to_csv(output_csv, index=False)
 
     def plot_error(self, n_bins=100):
@@ -170,9 +176,9 @@ class StatModel:
         fig, ax = plt.subplots(tight_layout=True)
 
         hist = ax.hist(self.errors, bins=n_bins)
-        ax.set_ylabel('Count')
-        ax.set_xlabel('Error')
-        ax.set_title('Error')
+        ax.set_ylabel("Count")
+        ax.set_xlabel("Error")
+        ax.set_title("Error")
         plt.show()
 
     def plot_y_and_pred_hists(self, n_bins=100):
@@ -182,27 +188,27 @@ class StatModel:
         counts_0, bins_0, bars_0 = axs[0].hist(self.test_predictions, bins=n_bins)
         counts_1, bins_1, bars_1 = axs[1].hist(self.y_test, bins=n_bins)
 
-        axs[0].set_ylabel('Count')
-        axs[0].set_title('Predictions')
-        axs[1].set_title('Actual')
+        axs[0].set_ylabel("Count")
+        axs[0].set_title("Predictions")
+        axs[1].set_title("Actual")
 
         ybounds = axs[0].get_ylim()
         ylength = ybounds[1] - ybounds[0]
         # pred_mean = np.mean(self.test_predictions)
         # test_mean = np.mean(self.y_test)
         sigma_multiple = 1.5
-        for i, data in enumerate([pred, actual]):
+        for i, data in enumerate([self.test_predictions, self.y_test]):
             mean_val = np.mean(data)
             st_dev = np.std(data)
-            axs[i].plot([mean_val, mean_val], list(ybounds), linestyle='--', color='black')
+            axs[i].plot([mean_val, mean_val], list(ybounds), linestyle="--", color="black")
             mean_text = f"mean\n{mean_val:.1f}"
             xbounds = axs[i].get_xlim()
             xlength = xbounds[1] - xbounds[0]
             axs[i].text(mean_val + (xlength * 0.05), ybounds[0] + (ylength * 0.85), mean_text)
             plus_s = mean_val + (sigma_multiple * st_dev)
             minus_s = mean_val - (sigma_multiple * st_dev)
-            axs[i].plot([plus_s, plus_s], list(ybounds), linestyle='--', color='gray')
-            axs[i].plot([minus_s, minus_s], list(ybounds), linestyle='--', color='gray')
+            axs[i].plot([plus_s, plus_s], list(ybounds), linestyle="--", color="gray")
+            axs[i].plot([minus_s, minus_s], list(ybounds), linestyle="--", color="gray")
             plus_s_text = f"+{sigma_multiple}s\n{plus_s:.1f}"
             minus_s_text = f"-{sigma_multiple}s\n{minus_s:.1f}"
             axs[i].text(plus_s + (xlength * 0.05), ybounds[0] + (ylength * 0.7), plus_s_text)
@@ -215,40 +221,26 @@ class StatModel:
         # test_plus_3s = test_mean + 3 * np.std(self.y_test)
         # test_minus_3s = test_mean - 3 * np.std(self.y_test)
 
-
         axs[0].set_ylim(ybounds[0], ybounds[1])
 
         plt.show()
 
     def plot_score_vs_rating(self):
         fig, ax = plt.subplots(tight_layout=True)
-        plt.scatter(self.x_train['score'], self.y_train, alpha=0.05)
+        plt.scatter(self.x_train["score"], self.y_train, alpha=0.025)
 
         plt.show()
 
 
-# def sample_pandas_df(data_x, data_y, train_size=0.7):
-#     train_x = data_x.sample(frac=train_size)
-#     train_y = data_y[train_x.index]
-#     test_x = data_x.loc[train_x.index.difference(data_x.index)]
-#     test_y = data_y[~train_x.index]
-
-
 if __name__ == "__main__":
     data_x, data_y, _ = make_xy_data(train_data)
-
 
     # x_train, x_test, y_train, y_test = train_test_split(data_x, data_y, train_size=0.85, random_state=SEED)
 
     train_test_data = train_test_split(data_x, data_y, train_size=0.7, random_state=SEED)
     # train_test_data = sample_pandas_df(data_x, data_y)
 
-    models = [
-        RandomForestRegressor(random_state=0),
-        xgb.XGBRegressor()
-    ]
-
-
+    models = [RandomForestRegressor(random_state=0), xgb.XGBRegressor()]
 
     stat_models = [StatModel(x, train_test_data) for x in models]
     stat_models.sort(reverse=True)
