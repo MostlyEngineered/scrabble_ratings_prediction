@@ -15,3 +15,4 @@ https://www.kaggle.com/competitions/scrabble-player-rating/data
 
 # Observations
 There are several oversampled ratings in the dataset.  Some form of normalization will help remove this bias.
+From looking at the charts the curve should be fit to 1444 to 2135 being 2 sigma margin
