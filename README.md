@@ -12,3 +12,6 @@ https://www.kaggle.com/competitions/scrabble-player-rating/data
 3) Simple dictionary usage from turns to generate statistics of dictionary usage (good players probably use obscure words)
 4) Generate point statistics of turns to plug into model
 5) Details point responses between players in turns to generate how much better they are (can they control endgames)
+
+# Observations
+There are several oversampled ratings in the dataset.  Some form of normalization will help remove this bias.
