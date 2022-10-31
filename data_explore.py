@@ -182,18 +182,6 @@ class StatModel:
         counts_0, bins_0, bars_0 = axs[0].hist(self.test_predictions, bins=n_bins)
         counts_1, bins_1, bars_1 = axs[1].hist(self.y_test, bins=n_bins)
 
-        max_index_0 = np.argmax(counts_0)
-        max_index_1 = np.argmax(counts_1)
-
-        pred = self.test_predictions
-        pred = pred[(pred <= bins_0[max_index_0]) | (pred >= bins_0[max_index_0 + 1])]
-        actual = self.y_test
-        actual = actual[(actual <= bins_1[max_index_1]) | (actual >= bins_1[max_index_1 + 1])]
-
-        counts_0, bins_0, bars_0 = axs[0].hist(pred, bins=n_bins)
-        counts_1, bins_1, bars_1 = axs[1].hist(actual, bins=n_bins)
-
-
         axs[0].set_ylabel('Count')
         axs[0].set_title('Predictions')
         axs[1].set_title('Actual')
