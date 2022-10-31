@@ -12,7 +12,8 @@ import os
 import sklearn.metrics
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
-from imblearn.under_sampling import RandomUnderSampler
+
+# from imblearn.under_sampling import RandomUnderSampler
 
 from enum import Enum
 import xgboost as xgb
@@ -31,26 +32,6 @@ data_folder = "data"
 histogram_bins = 100
 
 enums = []
-
-train_data_file = os.path.join(data_folder, "train.csv")
-submission_data_file = os.path.join(data_folder, "test.csv")
-turns_data_file = os.path.join(data_folder, "turns.csv")
-games_data_file = os.path.join(data_folder, "games.csv")
-
-train_data = pd.read_csv(train_data_file)
-submission_data = pd.read_csv(submission_data_file)
-turns_data = pd.read_csv(turns_data_file)
-games_data = pd.read_csv(games_data_file)
-
-submission_players = submission_data["nickname"].unique()
-train_players = train_data["nickname"].unique()
-
-total_players = list(set(train_players + train_players))
-print(
-    f"Number of submission players, {len(submission_players)}\nNumber of train players, {len(train_players)}\nNumber of total players, {len(total_players)}"
-)
-
-games_by_nickname = train_data[["nickname", "score"]].groupby("nickname").count().sort_values("score", ascending=False)
 
 
 def add_game_metadata(base_data, game_metadata):
@@ -106,62 +87,24 @@ def improve_normalization(player_data, resample_size=1000000):
     return ret_data
 
 
-def make_xy_data(base_data, improve_normalization_flag=True):
-    global enums
+class DataBlock:
+    def __init__(self, data_files):
+        # Boilerplate reading files
+        self.train_ratio = 0.7  # Ratio of total data used for training (vs validation test)
+        self.data_files = data_files
+        self.initial_data_dict = {k: pd.read_csv(v) for (k, v) in zip(data_files.keys(), data_files.values())}
+        self.train_data = self.initial_data_dict["train_data_file"]
+        self.initial_submission_file = self.initial_data_dict["submission_data_file"]
 
-    base_data = add_game_metadata(base_data, games_data)
+        self.preprocessed_train_data = preprocess_train_data(self.train_data, self.initial_data_dict['games_data_file'])
 
-    is_bot_data = base_data["nickname"].apply(is_bot)
-    base_data["is_bot"] = is_bot_data
-    player_data = base_data[base_data["is_bot"] == False].reset_index(drop=True)
-    bot_data = base_data[base_data["is_bot"] == True].reset_index(drop=True)
+        self.data_x, self.data_y, self.game_ids = make_xy_data(self.preprocessed_train_data)
 
-    assert len(player_data) == len(bot_data), "bot and player data different lengths"
-    player_data["bot_score"] = bot_data["score"]
-    player_data["bot_played"] = bot_data["nickname"]
-    player_data["bot_number_played"] = player_data["bot_played"].apply(bot_nickname_to_enum)
-    player_data["game_margin"] = player_data["score"] - player_data["bot_score"]
+        self.x_train, self.x_test, self.y_train, self.y_test = train_test_split(
+            self.data_x, self.data_y, train_size=self.train_ratio, random_state=SEED
+        )
 
-    if improve_normalization_flag:
-        player_data = improve_normalization(player_data)
 
-    x_columns = [
-        "score",
-        "time_control_name",
-        "game_end_reason",
-        "winner",
-        "lexicon",
-        "initial_time_seconds",
-        "increment_seconds",
-        "rating_mode",
-        "max_overtime_minutes",
-        "game_duration_seconds",
-        "game_margin",
-        "bot_number_played",
-    ]
-
-    X = player_data[x_columns]
-    X = X.infer_objects()
-    string_data = X.select_dtypes(exclude=[np.number, int, float])
-
-    enum_data = pd.DataFrame([])
-    for col in string_data.columns:
-        if isinstance(string_data[col].dtype, object):
-            vals = string_data[col].unique()
-            enum_col = col + "_enum"
-            ENUM_VALS = Enum(enum_col, vals.tolist())
-            enums = enums + [ENUM_VALS]
-            enum_data[enum_col] = string_data[col].apply(lambda x: (ENUM_VALS[x].value))
-
-    X = X.drop(columns=string_data.columns.to_list())
-    X_initial_columns = X.columns
-    X = pd.concat([X, enum_data], ignore_index=True, axis=1)
-    X.columns = X_initial_columns.to_list() + enum_data.columns.to_list()
-
-    y = player_data["rating"]
-    game_ids = player_data["game_id"]
-
-    return X, y, game_ids
 
 
 class StatModel:
@@ -179,8 +122,9 @@ class StatModel:
     def __lt__(self, other):
         return self.score < other.score
 
-    def generate_submission_data(self, output_csv):
-        submit_x, submit_y, game_ids = make_xy_data(submission_data, improve_normalization_flag=False)
+    def generate_submission_data(self, initial_submission_data, games_data, output_csv):
+        submission_data = preprocess_train_data(initial_submission_data, games_data, improve_normalization_flag=False)
+        submit_x, submit_y, game_ids = make_xy_data(submission_data)
         self.submit_y = self.model.predict(submit_x)
         self.submission["game_id"] = game_ids
         self.submission["rating"] = self.submit_y
@@ -244,31 +188,114 @@ class StatModel:
     def plot_score_vs_rating(self):
         fig, ax = plt.subplots(tight_layout=True)
         plt.scatter(self.x_train["score"], self.y_train, alpha=0.025)
-        axs[0].set_ylabel("Rating")
-        axs[0].set_xlabel("Score")
+        ax.set_ylabel("Rating")
+        ax.set_xlabel("Score")
 
         plt.show()
 
 
+class AnalysisBlock:
+    def __init__(self, data_files, models):
+        self.data = DataBlock(data_files)
+        self.models = models
+
+        train_test_data = self.data.x_train, self.data.x_test, self.data.y_train, self.data.y_test
+        self.stat_models = [StatModel(x, train_test_data) for x in models]
+        self.stat_models.sort(reverse=True)
+        self.best_model = self.stat_models[0]
+
+    def save_submission_file(self):
+        now = datetime.now()  # current date and time
+        date_time = now.strftime("%m-%d-%Y_%H-%M-%S")
+        submission_file = f"submission_{self.best_model.__class__.__name__}_{date_time}.csv"
+
+        self.best_model.generate_submission_data(
+            self.data.initial_data_dict["submission_data_file"], self.data.initial_data_dict["games_data_file"], os.path.join(submission_directory, submission_file)
+        )
+
+    def plots(self):
+        self.best_model.plot_error()
+        self.best_model.plot_y_and_pred_hists()
+        self.best_model.plot_score_vs_rating()
+
+
+
+def preprocess_train_data(base_data, games_data, improve_normalization_flag=True):
+
+    base_data = add_game_metadata(base_data, games_data)
+
+    is_bot_data = base_data["nickname"].apply(is_bot)
+    base_data["is_bot"] = is_bot_data
+    player_data = base_data[base_data["is_bot"] == False].reset_index(drop=True)
+    bot_data = base_data[base_data["is_bot"] == True].reset_index(drop=True)
+
+    assert len(player_data) == len(bot_data), "bot and player data different lengths"
+    player_data["bot_score"] = bot_data["score"]
+    player_data["bot_played"] = bot_data["nickname"]
+    player_data["bot_number_played"] = player_data["bot_played"].apply(bot_nickname_to_enum)
+    player_data["game_margin"] = player_data["score"] - player_data["bot_score"]
+
+    if improve_normalization_flag:
+        player_data = improve_normalization(player_data)
+
+    return player_data
+
+def make_xy_data(base_data):
+    global enums
+
+    x_columns = [
+        "score",
+        "time_control_name",
+        "game_end_reason",
+        "winner",
+        "lexicon",
+        "initial_time_seconds",
+        "increment_seconds",
+        "rating_mode",
+        "max_overtime_minutes",
+        "game_duration_seconds",
+        "game_margin",
+        "bot_number_played",
+    ]
+
+    X = base_data[x_columns]
+    X = X.infer_objects()
+    string_data = X.select_dtypes(exclude=[np.number, int, float])
+
+    enum_data = pd.DataFrame([])
+    for col in string_data.columns:
+        if isinstance(string_data[col].dtype, object):
+            vals = string_data[col].unique()
+            enum_col = col + "_enum"
+            ENUM_VALS = Enum(enum_col, vals.tolist())
+            enums = enums + [ENUM_VALS]
+            enum_data[enum_col] = string_data[col].apply(lambda x: (ENUM_VALS[x].value))
+
+    X = X.drop(columns=string_data.columns.to_list())
+    X_initial_columns = X.columns
+    X = pd.concat([X, enum_data], ignore_index=True, axis=1)
+    X.columns = X_initial_columns.to_list() + enum_data.columns.to_list()
+
+    y = base_data["rating"]
+    game_ids = base_data["game_id"]
+
+    return X, y, game_ids
+
+
 if __name__ == "__main__":
-    data_x, data_y, _ = make_xy_data(train_data)
+    train_data_file = os.path.join(data_folder, "train.csv")
+    submission_data_file = os.path.join(data_folder, "test.csv")
+    turns_data_file = os.path.join(data_folder, "turns.csv")
+    games_data_file = os.path.join(data_folder, "games.csv")
 
-    # x_train, x_test, y_train, y_test = train_test_split(data_x, data_y, train_size=0.85, random_state=SEED)
-
-    train_test_data = train_test_split(data_x, data_y, train_size=0.7, random_state=SEED)
-    # train_test_data = sample_pandas_df(data_x, data_y)
+    data_files = {
+        "train_data_file": train_data_file,
+        "submission_data_file": submission_data_file,
+        "turns_data_file": turns_data_file,
+        "games_data_file": games_data_file,
+    }
 
     models = [RandomForestRegressor(random_state=0), xgb.XGBRegressor()]
-
-    stat_models = [StatModel(x, train_test_data) for x in models]
-    stat_models.sort(reverse=True)
-    best_model = stat_models[0]
-
-    now = datetime.now()  # current date and time
-    date_time = now.strftime("%m-%d-%Y_%H-%M-%S")
-    submission_file = f"submission_{best_model.__class__.__name__}_{date_time}.csv"
-
-    best_model.generate_submission_data(os.path.join(submission_directory, submission_file))
-    best_model.plot_error()
-    best_model.plot_y_and_pred_hists()
-    best_model.plot_score_vs_rating()
+    analysis = AnalysisBlock(data_files, models)
+    analysis.save_submission_file()
+    analysis.plots()
