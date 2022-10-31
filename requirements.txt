@@ -4,3 +4,4 @@ tensorflow
 seaborn
 sklearn
 matplotlib
+xgboost

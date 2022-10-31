@@ -11,14 +11,14 @@ import os
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from enum import Enum
-
+import xgboost as xgb
 
 from datetime import datetime
-
 
 # class Bots(enum.Enum):
 
 bots = ["STEEBot", "BetterBot", "HastyBot"]
+submission_directory = "submissions"
 
 BOTS = Enum("BOTS", bots)
 
@@ -75,59 +75,85 @@ def make_xy_data(base_data):
     player_data["bot_number_played"] = player_data["bot_played"].apply(bot_nickname_to_enum)
     player_data["game_margin"] = player_data["score"] - player_data["bot_score"]
 
-    # x_columns = [
-    #     "score",
-    #     "rating",
-    #     "time_control_name",
-    #     "game_end_reason",
-    #     "winner",
-    #     "lexicon",
-    #     "initial_time_seconds",
-    #     "increment_seconds",
-    #     "rating_mode",
-    #     "max_overtime_minutes",
-    #     "game_duration_seconds",
-    #     "game_margin",
-    #     "bot_number_played"
-    # ]
-
     x_columns = [
         "score",
+        "rating",
+        "time_control_name",
+        "game_end_reason",
         "winner",
+        "lexicon",
         "initial_time_seconds",
         "increment_seconds",
+        "rating_mode",
         "max_overtime_minutes",
         "game_duration_seconds",
         "game_margin",
         "bot_number_played"
     ]
 
+    # x_columns = [
+    #     "score",
+    #     "winner",
+    #     "initial_time_seconds",
+    #     "increment_seconds",
+    #     "max_overtime_minutes",
+    #     "game_duration_seconds",
+    #     "game_margin",
+    #     "bot_number_played"
+    # ]
+
     X = player_data[x_columns]
+
+    for col in X.columns:
+        if isinstance(X[col].dtype, object):
+            vals = X[col].unique()
+            ENUM_VALS = Enum("BOTS", vals)
+
+
     y = player_data["rating"]
     game_ids = player_data['game_id']
 
     return X, y, game_ids
 
-def generate_submission_data(output_csv):
-    submission = pd.DataFrame([])
-    submit_x, submit_y, game_ids = make_xy_data(submission_data)
-    submit_y = rf_model.predict(submit_x)
-    submission['game_id'] = game_ids
-    submission['rating'] = submit_y
-    submission.to_csv(output_csv)
+class StatModel:
+    def __init__(self, model, train_test_data):
+        self.model = model
+        self.x_train, self.x_test, self.y_train, self.y_test = train_test_data
+        self.model.fit(self.x_train, self.y_train)
+        self.score = self.model.score(self.x_test, self.y_test)
+
+        print(f"For {self.model}, score is: {self.score}")
+
+    def __lt__(self, other):
+        return self.score < other.score
+
+    def generate_submission_data(self, output_csv):
+        submission = pd.DataFrame([])
+        submit_x, submit_y, game_ids = make_xy_data(submission_data)
+        submit_y = self.model.predict(submit_x)
+        submission['game_id'] = game_ids
+        submission['rating'] = submit_y
+        submission.to_csv(output_csv, index=False)
+
 
 if __name__ == "__main__":
     data_x, data_y, _ = make_xy_data(train_data)
 
-    x_train, x_test, y_train, y_test = train_test_split(data_x, data_y, train_size=0.85, random_state=SEED)
+    # x_train, x_test, y_train, y_test = train_test_split(data_x, data_y, train_size=0.85, random_state=SEED)
+    train_test_data = train_test_split(data_x, data_y, train_size=0.85, random_state=SEED)
 
-    rf_model = RandomForestRegressor(random_state=0)
-    rf_model.fit(x_train, y_train)
-    print(f"Random Forest Model accuracy: {rf_model.score(x_test, y_test)}")
+    models = [
+        RandomForestRegressor(random_state=0),
+        xgb.XGBRegressor()
+    ]
+
+    stat_models = [StatModel(x, train_test_data) for x in models]
+    stat_models.sort(reverse=True)
+    best_model = stat_models[0]
 
     now = datetime.now()  # current date and time
-
     date_time = now.strftime("%m-%d-%Y_%H-%M-%S")
+    submission_file = f"submission_{best_model.__class__.__name__}_{date_time}.csv"
 
-    generate_submission_data(f"submission_rf_{date_time}.csv")
+    best_model.generate_submission_data(os.path.join(submission_directory, submission_file))
 
