@@ -68,16 +68,40 @@ def bot_nickname_to_enum(nickname):
 def string_col_to_enum(nickname):
     return BOTS[nickname].value
 
+def normal_distribution(x, mu, sigma):
+    coeff = (1 / (sigma * np.sqrt(2 * np.pi)))
+    exponent = (-1/2) * (((x-mu)/sigma)**2)
+    return coeff * np.exp(exponent)
 
-def improve_normalization(player_data):
+def improve_normalization(player_data, resample_size=1000000):
     # Remove overrepresented data
     counts, bins = np.histogram(player_data["rating"], bins=histogram_bins)
     max_bin = np.argmax(counts)
     bounds = (bins[max_bin], bins[max_bin + 1])
-    player_data = player_data.loc[
+    adj_player_data = player_data.loc[
         (player_data["rating"] <= bins[max_bin]) | (player_data["rating"] >= bins[max_bin + 1])
     ]
-    return player_data
+    mean_adj_player_data = np.mean(adj_player_data['rating'])
+    std_adj_player_data = np.std(adj_player_data['rating'])
+
+    ret_data = pd.DataFrame([], columns=player_data.columns)
+    bin_width = (bins[1] - bins[0])
+    bin_half_width = bin_width / 2
+    desired_counts = np.array([], dtype=int)
+    for bin in bins:
+        bin_midpoint = bin + bin_half_width
+        bin_count = int(resample_size * normal_distribution(bin_midpoint, mean_adj_player_data, std_adj_player_data) * bin_width)
+        # print(f"bin count is {bin_count}")
+        desired_counts = np.append(desired_counts, bin_count)
+        bin_slice = player_data.loc[(player_data["rating"] >= bin) & (player_data["rating"] < (bin+bin_width))]
+        if bin_slice.empty:
+            continue
+        data_multiple = bin_count / len(bin_slice)
+        repeat_data = [bin_slice] * int(np.floor(data_multiple)) + [bin_slice.sample(int(np.mod(data_multiple, 1) * len(bin_slice)))]
+        concat_data = [ret_data] + repeat_data
+        ret_data = pd.concat(concat_data, ignore_index=True, axis=0)
+
+    return ret_data
 
 
 def make_xy_data(base_data, improve_normalization_flag=True):
@@ -126,6 +150,7 @@ def make_xy_data(base_data, improve_normalization_flag=True):
     # ]
 
     X = player_data[x_columns]
+    X = X.infer_objects()
     string_data = X.select_dtypes(exclude=[np.number, int, float])
 
     enum_data = pd.DataFrame([])
