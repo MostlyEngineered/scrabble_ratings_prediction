@@ -65,13 +65,11 @@ def bot_nickname_to_enum(nickname):
     return BOTS[nickname].value
 
 
-def string_col_to_enum(nickname):
-    return BOTS[nickname].value
-
 def normal_distribution(x, mu, sigma):
-    coeff = (1 / (sigma * np.sqrt(2 * np.pi)))
-    exponent = (-1/2) * (((x-mu)/sigma)**2)
+    coeff = 1 / (sigma * np.sqrt(2 * np.pi))
+    exponent = (-1 / 2) * (((x - mu) / sigma) ** 2)
     return coeff * np.exp(exponent)
+
 
 def improve_normalization(player_data, resample_size=1000000):
     # Remove overrepresented data
@@ -81,23 +79,27 @@ def improve_normalization(player_data, resample_size=1000000):
     adj_player_data = player_data.loc[
         (player_data["rating"] <= bins[max_bin]) | (player_data["rating"] >= bins[max_bin + 1])
     ]
-    mean_adj_player_data = np.mean(adj_player_data['rating'])
-    std_adj_player_data = np.std(adj_player_data['rating'])
+    mean_adj_player_data = np.mean(adj_player_data["rating"])
+    std_adj_player_data = np.std(adj_player_data["rating"])
 
     ret_data = pd.DataFrame([], columns=player_data.columns)
-    bin_width = (bins[1] - bins[0])
+    bin_width = bins[1] - bins[0]
     bin_half_width = bin_width / 2
     desired_counts = np.array([], dtype=int)
     for bin in bins:
         bin_midpoint = bin + bin_half_width
-        bin_count = int(resample_size * normal_distribution(bin_midpoint, mean_adj_player_data, std_adj_player_data) * bin_width)
+        bin_count = int(
+            resample_size * normal_distribution(bin_midpoint, mean_adj_player_data, std_adj_player_data) * bin_width
+        )
         # print(f"bin count is {bin_count}")
         desired_counts = np.append(desired_counts, bin_count)
-        bin_slice = player_data.loc[(player_data["rating"] >= bin) & (player_data["rating"] < (bin+bin_width))]
+        bin_slice = player_data.loc[(player_data["rating"] >= bin) & (player_data["rating"] < (bin + bin_width))]
         if bin_slice.empty:
             continue
         data_multiple = bin_count / len(bin_slice)
-        repeat_data = [bin_slice] * int(np.floor(data_multiple)) + [bin_slice.sample(int(np.mod(data_multiple, 1) * len(bin_slice)))]
+        repeat_data = [bin_slice] * int(np.floor(data_multiple)) + [
+            bin_slice.sample(int(np.mod(data_multiple, 1) * len(bin_slice)))
+        ]
         concat_data = [ret_data] + repeat_data
         ret_data = pd.concat(concat_data, ignore_index=True, axis=0)
 
@@ -137,17 +139,6 @@ def make_xy_data(base_data, improve_normalization_flag=True):
         "game_margin",
         "bot_number_played",
     ]
-
-    # x_columns = [
-    #     "score",
-    #     "winner",
-    #     "initial_time_seconds",
-    #     "increment_seconds",
-    #     "max_overtime_minutes",
-    #     "game_duration_seconds",
-    #     "game_margin",
-    #     "bot_number_played"
-    # ]
 
     X = player_data[x_columns]
     X = X.infer_objects()
@@ -253,6 +244,8 @@ class StatModel:
     def plot_score_vs_rating(self):
         fig, ax = plt.subplots(tight_layout=True)
         plt.scatter(self.x_train["score"], self.y_train, alpha=0.025)
+        axs[0].set_ylabel("Rating")
+        axs[0].set_xlabel("Score")
 
         plt.show()
 
