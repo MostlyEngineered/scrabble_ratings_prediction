@@ -10,8 +10,10 @@ import pandas as pd
 import os
 
 import sklearn.metrics
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, StackingRegressor
 from sklearn.model_selection import train_test_split
+from sklearn.linear_model import RidgeCV, LassoCV
+from sklearn.neighbors import KNeighborsRegressor
 
 # from imblearn.under_sampling import RandomUnderSampler
 
@@ -81,6 +83,7 @@ def improve_normalization(player_data, resample_size=1000000):
         repeat_data = [bin_slice] * int(np.floor(data_multiple)) + [
             bin_slice.sample(int(np.mod(data_multiple, 1) * len(bin_slice)))
         ]
+
         concat_data = [ret_data] + repeat_data
         ret_data = pd.concat(concat_data, ignore_index=True, axis=0)
 
@@ -96,15 +99,13 @@ class DataBlock:
         self.train_data = self.initial_data_dict["train_data_file"]
         self.initial_submission_file = self.initial_data_dict["submission_data_file"]
 
-        self.preprocessed_train_data = preprocess_train_data(self.train_data, self.initial_data_dict['games_data_file'])
+        self.preprocessed_train_data = preprocess_train_data(self.train_data, self.initial_data_dict["games_data_file"])
 
         self.data_x, self.data_y, self.game_ids = make_xy_data(self.preprocessed_train_data)
 
         self.x_train, self.x_test, self.y_train, self.y_test = train_test_split(
             self.data_x, self.data_y, train_size=self.train_ratio, random_state=SEED
         )
-
-
 
 
 class StatModel:
@@ -130,69 +131,6 @@ class StatModel:
         self.submission["rating"] = self.submit_y
         self.submission.to_csv(output_csv, index=False)
 
-    def plot_error(self, n_bins=100):
-        self.errors = np.subtract(self.test_predictions, self.y_test)
-
-        fig, ax = plt.subplots(tight_layout=True)
-
-        hist = ax.hist(self.errors, bins=n_bins)
-        ax.set_ylabel("Count")
-        ax.set_xlabel("Error")
-        ax.set_title("Error")
-        plt.show()
-
-    def plot_y_and_pred_hists(self, n_bins=100):
-        fig, axs = plt.subplots(1, 2, sharey=True, tight_layout=True)
-
-        # We can set the number of bins with the *bins* keyword argument.
-        counts_0, bins_0, bars_0 = axs[0].hist(self.test_predictions, bins=n_bins)
-        counts_1, bins_1, bars_1 = axs[1].hist(self.y_test, bins=n_bins)
-
-        axs[0].set_ylabel("Count")
-        axs[0].set_title("Predictions")
-        axs[1].set_title("Actual")
-
-        ybounds = axs[0].get_ylim()
-        ylength = ybounds[1] - ybounds[0]
-        # pred_mean = np.mean(self.test_predictions)
-        # test_mean = np.mean(self.y_test)
-        sigma_multiple = 1.5
-        for i, data in enumerate([self.test_predictions, self.y_test]):
-            mean_val = np.mean(data)
-            st_dev = np.std(data)
-            axs[i].plot([mean_val, mean_val], list(ybounds), linestyle="--", color="black")
-            mean_text = f"mean\n{mean_val:.1f}"
-            xbounds = axs[i].get_xlim()
-            xlength = xbounds[1] - xbounds[0]
-            axs[i].text(mean_val + (xlength * 0.05), ybounds[0] + (ylength * 0.85), mean_text)
-            plus_s = mean_val + (sigma_multiple * st_dev)
-            minus_s = mean_val - (sigma_multiple * st_dev)
-            axs[i].plot([plus_s, plus_s], list(ybounds), linestyle="--", color="gray")
-            axs[i].plot([minus_s, minus_s], list(ybounds), linestyle="--", color="gray")
-            plus_s_text = f"+{sigma_multiple}s\n{plus_s:.1f}"
-            minus_s_text = f"-{sigma_multiple}s\n{minus_s:.1f}"
-            axs[i].text(plus_s + (xlength * 0.05), ybounds[0] + (ylength * 0.7), plus_s_text)
-            axs[i].text(minus_s + (xlength * 0.05), ybounds[0] + (ylength * 0.7), minus_s_text)
-
-        # axs[0].plot([pred_mean, pred_mean], list(ybounds), linestyle='--', color='black')
-        # axs[1].plot([test_mean, test_mean], list(ybounds), linestyle='--', color='black')
-        # pred_plus_3s = pred_mean + 3 * np.std(self.test_predictions)
-        # pred_minus_3s = pred_mean - 3 * np.std(self.test_predictions)
-        # test_plus_3s = test_mean + 3 * np.std(self.y_test)
-        # test_minus_3s = test_mean - 3 * np.std(self.y_test)
-
-        axs[0].set_ylim(ybounds[0], ybounds[1])
-
-        plt.show()
-
-    def plot_score_vs_rating(self):
-        fig, ax = plt.subplots(tight_layout=True)
-        plt.scatter(self.x_train["score"], self.y_train, alpha=0.025)
-        ax.set_ylabel("Rating")
-        ax.set_xlabel("Score")
-
-        plt.show()
-
 
 class AnalysisBlock:
     def __init__(self, data_files, models):
@@ -210,15 +148,25 @@ class AnalysisBlock:
         submission_file = f"submission_{self.best_model.__class__.__name__}_{date_time}.csv"
 
         self.best_model.generate_submission_data(
-            self.data.initial_data_dict["submission_data_file"], self.data.initial_data_dict["games_data_file"], os.path.join(submission_directory, submission_file)
+            self.data.initial_data_dict["submission_data_file"],
+            self.data.initial_data_dict["games_data_file"],
+            os.path.join(submission_directory, submission_file),
         )
 
     def plots(self):
-        self.best_model.plot_error()
-        self.best_model.plot_y_and_pred_hists()
-        self.best_model.plot_score_vs_rating()
+        plot_error(self.best_model.test_predictions, self.data.y_test)
+        plot_y_and_pred_hists(self.best_model.test_predictions, self.data.y_test)
+        plot_score_vs_rating(self.best_model.test_predictions, self.data.y_test)
 
+        # sel_model = self.best_model
+        sel_model = self.models[1]
+        temp_data = preprocess_train_data(self.data.train_data, self.data.initial_data_dict["games_data_file"], improve_normalization_flag=False)
+        temp_data_x, temp_data_y, temp_game_ids = make_xy_data(temp_data)
+        temp_pred = sel_model.predict(temp_data_x)
 
+        plot_y_and_pred_hists(temp_pred, temp_data_y, title="Original Data and Prediction")
+        mse = sklearn.metrics.mean_squared_error(temp_data_y, temp_pred, squared=False)
+        plot_error(temp_pred, temp_data_y, title="Errors on original data")
 
 def preprocess_train_data(base_data, games_data, improve_normalization_flag=True):
 
@@ -239,6 +187,7 @@ def preprocess_train_data(base_data, games_data, improve_normalization_flag=True
         player_data = improve_normalization(player_data)
 
     return player_data
+
 
 def make_xy_data(base_data):
     global enums
@@ -282,6 +231,73 @@ def make_xy_data(base_data):
     return X, y, game_ids
 
 
+def plot_error(pred, actual, n_bins=100, title=None):
+    # self.errors = np.subtract(self.test_predictions, self.y_test)
+    errors = np.subtract(pred, actual)
+
+    fig, ax = plt.subplots(tight_layout=True)
+
+    hist = ax.hist(errors, bins=n_bins)
+    ax.set_ylabel("Count")
+    ax.set_xlabel("Error")
+
+    if title is not None:
+        plt.title = title
+    plt.show()
+
+
+def plot_y_and_pred_hists(pred, actual, n_bins=100, sigma_multiple=1.5, title=None):
+    # self.test_predictions, self.y_test
+    fig, axs = plt.subplots(1, 2, sharey=True, tight_layout=True)
+
+    # We can set the number of bins with the *bins* keyword argument.
+    counts_0, bins_0, bars_0 = axs[0].hist(pred, bins=n_bins)
+    counts_1, bins_1, bars_1 = axs[1].hist(actual, bins=n_bins)
+
+    axs[0].set_ylabel("Count")
+    axs[0].set_title("Predictions")
+    axs[1].set_title("Actual")
+
+    ybounds = axs[0].get_ylim()
+    ylength = ybounds[1] - ybounds[0]
+
+    for i, data in enumerate([pred, actual]):
+        mean_val = np.mean(data)
+        st_dev = np.std(data)
+        axs[i].plot([mean_val, mean_val], list(ybounds), linestyle="--", color="black")
+        mean_text = f"mean\n{mean_val:.1f}"
+        xbounds = axs[i].get_xlim()
+        xlength = xbounds[1] - xbounds[0]
+        axs[i].text(mean_val + (xlength * 0.05), ybounds[0] + (ylength * 0.85), mean_text)
+        plus_s = mean_val + (sigma_multiple * st_dev)
+        minus_s = mean_val - (sigma_multiple * st_dev)
+        axs[i].plot([plus_s, plus_s], list(ybounds), linestyle="--", color="gray")
+        axs[i].plot([minus_s, minus_s], list(ybounds), linestyle="--", color="gray")
+        plus_s_text = f"+{sigma_multiple}s\n{plus_s:.1f}"
+        minus_s_text = f"-{sigma_multiple}s\n{minus_s:.1f}"
+        axs[i].text(plus_s + (xlength * 0.05), ybounds[0] + (ylength * 0.7), plus_s_text)
+        axs[i].text(minus_s + (xlength * 0.05), ybounds[0] + (ylength * 0.7), minus_s_text)
+
+    axs[0].set_ylim(ybounds[0], ybounds[1])
+
+    if title is not None:
+        plt.title = title
+
+    plt.show()
+
+
+def plot_score_vs_rating(score, rating, title=None):
+    # self.x_train["score"], self.y_train,
+    fig, ax = plt.subplots(tight_layout=True)
+    plt.scatter(score, rating, alpha=0.025)
+    ax.set_ylabel("Rating")
+    ax.set_xlabel("Score")
+
+    if title is not None:
+        plt.title = title
+    plt.show()
+
+
 if __name__ == "__main__":
     train_data_file = os.path.join(data_folder, "train.csv")
     submission_data_file = os.path.join(data_folder, "test.csv")
@@ -295,7 +311,16 @@ if __name__ == "__main__":
         "games_data_file": games_data_file,
     }
 
-    models = [RandomForestRegressor(random_state=0), xgb.XGBRegressor()]
+    estimators = [('ridge', RidgeCV()),
+                  ('lasso', LassoCV(random_state=42)),
+                  ('knr', KNeighborsRegressor(n_neighbors=20, metric='euclidean'))]
+
+    final_estimator = GradientBoostingRegressor(n_estimators = 25, subsample = 0.5, min_samples_leaf = 25, max_features = 1, random_state = 42)
+
+    # models = [RandomForestRegressor(random_state=0), xgb.XGBRegressor(),
+    #           GradientBoostingRegressor(), StackingRegressor(estimators=estimators)]
+    models = [xgb.XGBRegressor(),
+              GradientBoostingRegressor(), StackingRegressor(estimators=estimators)]
     analysis = AnalysisBlock(data_files, models)
     analysis.save_submission_file()
     analysis.plots()
