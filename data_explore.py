@@ -1,4 +1,8 @@
 import numpy as np
+
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 import pandas as pd
 
 
@@ -53,6 +57,28 @@ def normal_distribution(x, mu, sigma):
     exponent = (-1 / 2) * (((x - mu) / sigma) ** 2)
     return coeff * np.exp(exponent)
 
+def remove_highest_histogram_bin(data, histogram_bin_size=histogram_bins):
+    counts, bins = np.histogram(data["rating"], bins=histogram_bin_size)
+    max_bin = np.argmax(counts)
+    bounds = (bins[max_bin], bins[max_bin + 1])
+    adj_player_data = data.loc[
+        (data["rating"] <= bins[max_bin]) | (data["rating"] >= bins[max_bin + 1])
+    ]
+    return adj_player_data
+
+
+def sample_highest_histogram_bin(data, histogram_bin_size=histogram_bins, sample_ratio=0.2):
+    counts, bins = np.histogram(data["rating"], bins=histogram_bin_size)
+    max_bin = np.argmax(counts)
+    bounds = (bins[max_bin], bins[max_bin + 1])
+    adj_player_data = data.loc[
+        (data["rating"] <= bins[max_bin]) | (data["rating"] >= bins[max_bin + 1])
+    ]
+    sample = data.loc[
+        (data["rating"] >= bins[max_bin]) & (data["rating"] <= bins[max_bin + 1])
+    ]
+
+    return adj_player_data.append(sample.sample(frac=sample_ratio))
 
 def improve_normalization(player_data, resample_size=1000000):
     # Remove overrepresented data
@@ -89,6 +115,38 @@ def improve_normalization(player_data, resample_size=1000000):
 
     return ret_data
 
+def normalize_data(x_train, y_train, resample_size=1000000):
+    # Remove overrepresented data
+    counts, bins = np.histogram(y_train, bins=histogram_bins)
+
+    mean_adj_player_data = np.mean(y_train)
+    std_adj_player_data = np.std(y_train)
+
+    normalized_y = pd.DataFrame([])
+    bin_width = bins[1] - bins[0]
+    bin_half_width = bin_width / 2
+    desired_counts = np.array([], dtype=int)
+    for bin in bins:
+        bin_midpoint = bin + bin_half_width
+        bin_count = int(
+            resample_size * normal_distribution(bin_midpoint, mean_adj_player_data, std_adj_player_data) * bin_width
+        )
+        # print(f"bin count is {bin_count}")
+        desired_counts = np.append(desired_counts, bin_count)
+        bin_slice = y_train.loc[(y_train >= bin) & (y_train < (bin + bin_width))]
+        if bin_slice.empty:
+            continue
+        data_multiple = bin_count / len(bin_slice)
+        repeat_data = [bin_slice] * int(np.floor(data_multiple)) + [
+            bin_slice.sample(int(np.mod(data_multiple, 1) * len(bin_slice)))
+        ]
+
+        concat_data = [normalized_y] + repeat_data
+        normalized_y = pd.concat(concat_data, ignore_index=False, axis=0)
+
+    normalized_x = x_train.loc[normalized_y.index]
+
+    return normalized_x, normalized_y
 
 class DataBlock:
     def __init__(self, data_files):
@@ -96,16 +154,28 @@ class DataBlock:
         self.train_ratio = 0.7  # Ratio of total data used for training (vs validation test)
         self.data_files = data_files
         self.initial_data_dict = {k: pd.read_csv(v) for (k, v) in zip(data_files.keys(), data_files.values())}
-        self.train_data = self.initial_data_dict["train_data_file"]
+        self.initial_train_data = self.initial_data_dict["train_data_file"]
         self.initial_submission_file = self.initial_data_dict["submission_data_file"]
 
-        self.preprocessed_train_data = preprocess_train_data(self.train_data, self.initial_data_dict["games_data_file"])
+        self.preprocessed_train_data = preprocess_train_data(self.initial_train_data, self.initial_data_dict["games_data_file"])
+
+        self.filter_rating_train_data = sample_highest_histogram_bin(self.preprocessed_train_data, histogram_bin_size=histogram_bins, sample_ratio=0.15)
 
         self.data_x, self.data_y, self.game_ids = make_xy_data(self.preprocessed_train_data)
 
         self.x_train, self.x_test, self.y_train, self.y_test = train_test_split(
             self.data_x, self.data_y, train_size=self.train_ratio, random_state=SEED
         )
+
+        self.normalized_train_x, self.normalized_train_y = normalize_data(self.x_train, self.y_train)
+
+        plot_histogram(self.normalized_train_y, n_bins=100, title=None)
+
+        # plot_histogram(self.filter_rating_train_data["rating"], n_bins=100, title=None)
+
+        # if improve_normalization_flag:
+        #     player_data = improve_normalization(player_data)
+
 
 
 class StatModel:
@@ -160,7 +230,7 @@ class AnalysisBlock:
 
         # sel_model = self.best_model
         sel_model = self.models[1]
-        temp_data = preprocess_train_data(self.data.train_data, self.data.initial_data_dict["games_data_file"], improve_normalization_flag=False)
+        temp_data = preprocess_train_data(self.data.initial_train_data, self.data.initial_data_dict["games_data_file"], improve_normalization_flag=False)
         temp_data_x, temp_data_y, temp_game_ids = make_xy_data(temp_data)
         temp_pred = sel_model.predict(temp_data_x)
 
@@ -183,8 +253,7 @@ def preprocess_train_data(base_data, games_data, improve_normalization_flag=True
     player_data["bot_number_played"] = player_data["bot_played"].apply(bot_nickname_to_enum)
     player_data["game_margin"] = player_data["score"] - player_data["bot_score"]
 
-    if improve_normalization_flag:
-        player_data = improve_normalization(player_data)
+
 
     return player_data
 
@@ -292,6 +361,19 @@ def plot_score_vs_rating(score, rating, title=None):
     plt.scatter(score, rating, alpha=0.025)
     ax.set_ylabel("Rating")
     ax.set_xlabel("Score")
+
+    if title is not None:
+        plt.title = title
+    plt.show()
+
+
+def plot_histogram(data, n_bins=100, title=None):
+    # self.errors = np.subtract(self.test_predictions, self.y_test)
+    fig, ax = plt.subplots(tight_layout=True)
+
+    hist = ax.hist(data, bins=n_bins)
+    ax.set_ylabel("Count")
+    ax.set_xlabel("")
 
     if title is not None:
         plt.title = title
